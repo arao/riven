@@ -219,12 +219,10 @@ def scrape_item(request: Request, id: str) -> ScrapeItemResponse:
                 .scalar_one_or_none()
             )
         streams = scraper.scrape(item)
-        stream_containers = downloader.get_instant_availability([stream for stream in streams.keys()])
-        for stream in streams.keys():
-            if len(stream_containers.get(stream, [])) > 0:
-                streams[stream].is_cached = True
-            else:
-                streams[stream].is_cached = False
+        for stream_hash, stream in streams.items():
+            logger.debug(f"Checking availability of stream hash {stream_hash}")
+            stream_container = downloader.get_instant_availability(stream_hash, item.type)
+            stream.is_cached = stream_container is not None
         log_string = item.log_string
 
     return {
@@ -280,8 +278,12 @@ async def start_manual_session(
     try:
         torrent_id = downloader.add_torrent(info_hash)
         torrent_info = downloader.get_torrent_info(torrent_id)
-        containers = downloader.get_instant_availability([session.magnet]).get(session.magnet, None)
-        session_manager.update_session(session.id, torrent_id=torrent_id, torrent_info=torrent_info, containers=containers)
+        torrent_container = downloader.get_instant_availability(session.magnet, item.type)
+        if torrent_container is None:
+            raise HTTPException(status_code=400, detail=f"Cannot start the download for hash {info_hash} due to missing availability container ")
+        # torrent_container is a new structure, UI required Container structure, defined top of this file.
+        containers = [{file.file_id: file for file in torrent_container.files}]
+        session_manager.update_session(session.id, torrent_id=torrent_id, torrent_info=torrent_info.dict(), containers=containers)
     except Exception as e:
         background_tasks.add_task(session_manager.abort_session, session.id)
         raise HTTPException(status_code=500, detail=str(e))
@@ -290,7 +292,7 @@ async def start_manual_session(
         "message": "Started manual scraping session",
         "session_id": session.id,
         "torrent_id": torrent_id,
-        "torrent_info": torrent_info,
+        "torrent_info": torrent_info.dict(),
         "containers": containers,
         "expires_at": session.expires_at.isoformat()
     }
@@ -357,7 +359,7 @@ async def manual_update_attributes(request: Request, session_id, data: Union[Con
             item.reset()
             item.file = data.filename
             item.folder = data.filename
-            item.alternative_folder = session.torrent_info["original_filename"]
+            item.alternative_folder = session.torrent_info["alternative_filename"]
             item.active_stream = {"infohash": session.magnet, "id": session.torrent_info["id"]}
             torrent = rtn.rank(session.magnet, session.magnet)
             item.streams.append(ItemStream(torrent))
@@ -377,7 +379,7 @@ async def manual_update_attributes(request: Request, session_id, data: Union[Con
                         item_episode.reset()
                         item_episode.file = episode_data.filename
                         item_episode.folder = episode_data.filename
-                        item_episode.alternative_folder = session.torrent_info["original_filename"]
+                        item_episode.alternative_folder = session.torrent_info["alternative_filename"]
                         item_episode.active_stream = {"infohash": session.magnet, "id": session.torrent_info["id"]}
                         torrent = rtn.rank(session.magnet, session.magnet)
                         item_episode.streams.append(ItemStream(torrent))

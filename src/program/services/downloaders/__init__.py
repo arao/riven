@@ -152,7 +152,7 @@ class Downloader:
         item.alternative_folder = download_result.info.alternative_filename
         item.active_stream = {"infohash": download_result.infohash, "id": download_result.info.id}
 
-    def get_instant_availability(self, infohash: str, item_type: str) -> List[TorrentContainer]:
+    def get_instant_availability(self, infohash: str, item_type: str) -> Optional[TorrentContainer]:
         """Check if the torrent is cached"""
         return self.service.get_instant_availability(infohash, item_type)
 
